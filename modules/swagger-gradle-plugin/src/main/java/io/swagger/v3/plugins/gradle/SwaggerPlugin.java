@@ -19,6 +19,8 @@ public class SwaggerPlugin implements Plugin<Project> {
                 dependencies.add(project.getDependencies().create("io.swagger.core.v3:swagger-jaxrs2:2.0.10-SNAPSHOT"));
                 dependencies.add(project.getDependencies().create("javax.ws.rs:javax.ws.rs-api:2.1"));
                 dependencies.add(project.getDependencies().create("javax.servlet:javax.servlet-api:3.1.0"));
+                dependencies.add(project.getDependencies().create("io.swagger.core.v3:swagger-spring:2.0.7-SNAPSHOT"));
+                dependencies.add(project.getDependencies().create("org.springframework.boot:spring-boot-starter-web:2.1.1.RELEASE"));
             }
         });
         Task task = project.getTasks().create("resolve", ResolveTask.class);

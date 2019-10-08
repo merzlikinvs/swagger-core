@@ -38,6 +38,7 @@ public class ResolveTask extends DefaultTask {
     private static Logger LOGGER = Logging.getLogger(ResolveTask.class);
 
     public enum Format {JSON, YAML, JSONANDYAML};
+    public enum Library {JAXRS2, SPRING_MVC};
 
     private String outputFileName = "openapi";
 
@@ -67,6 +68,8 @@ public class ResolveTask extends DefaultTask {
     private String objectMapperProcessorClass;
 
     private String contextId;
+    private Library library = Library.JAXRS2;
+
 
     @Input
     @Optional
@@ -328,7 +331,20 @@ public class ResolveTask extends DefaultTask {
         ClassLoader classLoader = new URLClassLoader(urls.toArray(new URL[urls.size()]));
 
         try {
-            Class swaggerLoaderClass = classLoader.loadClass("io.swagger.v3.jaxrs2.integration.SwaggerLoader");
+            Class swaggerLoaderClass;
+            switch (library) {
+                case JAXRS2: {
+                    swaggerLoaderClass=classLoader.loadClass("io.swagger.v3.jaxrs2.integration.SwaggerLoader");
+                    break;
+                }
+                case SPRING_MVC: {
+                    swaggerLoaderClass=classLoader.loadClass("io.swagger.v3.spring.integration.SwaggerLoader");
+                    break;
+                }
+                default: {
+                    throw new IllegalStateException("Library is not set. Expected one of: " + Library.values())
+                }
+            }
             Object swaggerLoader = swaggerLoaderClass.newInstance();
 
             Method method =  null;
