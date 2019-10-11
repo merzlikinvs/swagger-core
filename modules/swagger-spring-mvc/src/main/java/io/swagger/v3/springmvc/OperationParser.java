@@ -9,16 +9,12 @@ import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import org.apache.commons.lang3.StringUtils;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.Produces;
 import java.util.Map;
 import java.util.Optional;
 
 public class OperationParser {
 
-    public static final String COMPONENTS_REF = "#/components/schemas/";
-
-    public static Optional<RequestBody> getRequestBody(io.swagger.v3.oas.annotations.parameters.RequestBody requestBody, Consumes classConsumes, Consumes methodConsumes, Components components, JsonView jsonViewAnnotation) {
+    public static Optional<RequestBody> getRequestBody(io.swagger.v3.oas.annotations.parameters.RequestBody requestBody, String[] classConsumes, String[] methodConsumes, Components components, JsonView jsonViewAnnotation) {
         if (requestBody == null) {
             return Optional.empty();
         }
@@ -55,12 +51,12 @@ public class OperationParser {
         if (isEmpty) {
             return Optional.empty();
         }
-        AnnotationsUtils.getContent(requestBody.content(), classConsumes == null ? new String[0] : classConsumes.value(),
-                methodConsumes == null ? new String[0] : methodConsumes.value(), null, components, jsonViewAnnotation).ifPresent(requestBodyObject::setContent);
+        AnnotationsUtils.getContent(requestBody.content(), classConsumes == null ? new String[0] : classConsumes,
+                methodConsumes == null ? new String[0] : methodConsumes, null, components, jsonViewAnnotation).ifPresent(requestBodyObject::setContent);
         return Optional.of(requestBodyObject);
     }
 
-    public static Optional<ApiResponses> getApiResponses(final io.swagger.v3.oas.annotations.responses.ApiResponse[] responses, Produces classProduces, Produces methodProduces, Components components, JsonView jsonViewAnnotation) {
+    public static Optional<ApiResponses> getApiResponses(final io.swagger.v3.oas.annotations.responses.ApiResponse[] responses, String[] classProduces, String[] methodProduces, Components components, JsonView jsonViewAnnotation) {
         if (responses == null) {
             return Optional.empty();
         }
@@ -88,8 +84,8 @@ public class OperationParser {
                 }
             }
 
-            AnnotationsUtils.getContent(response.content(), classProduces == null ? new String[0] : classProduces.value(),
-                    methodProduces == null ? new String[0] : methodProduces.value(), null, components, jsonViewAnnotation).ifPresent(apiResponseObject::content);
+            AnnotationsUtils.getContent(response.content(), classProduces == null ? new String[0] : classProduces,
+                    methodProduces == null ? new String[0] : methodProduces, null, components, jsonViewAnnotation).ifPresent(apiResponseObject::content);
             AnnotationsUtils.getHeaders(response.headers(), jsonViewAnnotation).ifPresent(apiResponseObject::headers);
             if (StringUtils.isNotBlank(apiResponseObject.getDescription()) || apiResponseObject.getContent() != null || apiResponseObject.getHeaders() != null) {
 

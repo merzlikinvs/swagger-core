@@ -3,16 +3,15 @@ package io.swagger.v3.springmvc.util;
 import com.fasterxml.jackson.annotation.JsonView;
 import io.swagger.v3.core.util.ParameterProcessor;
 import io.swagger.v3.core.util.ReflectionUtils;
-import io.swagger.v3.springmvc.ext.OpenAPIExtension;
-import io.swagger.v3.springmvc.ext.OpenAPIExtensions;
 import io.swagger.v3.oas.integration.api.OpenAPIConfiguration;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.springmvc.ext.OpenAPIExtension;
+import io.swagger.v3.springmvc.ext.OpenAPIExtensions;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 
-import javax.ws.rs.DELETE;
-import javax.ws.rs.HttpMethod;
-import javax.ws.rs.core.Context;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -43,7 +42,7 @@ public class ReaderUtils {
      * @param components
      * @return the collection of supported parameters
      */
-    public static List<Parameter> collectConstructorParameters(Class<?> cls, Components components, javax.ws.rs.Consumes classConsumes, JsonView jsonViewAnnotation) {
+    public static List<Parameter> collectConstructorParameters(Class<?> cls, Components components, String[] classConsumes, JsonView jsonViewAnnotation) {
         if (cls.isLocalClass() || (cls.isMemberClass() && !Modifier.isStatic(cls.getModifiers()))) {
             return Collections.emptyList();
         }
@@ -64,27 +63,23 @@ public class ReaderUtils {
             final List<Parameter> parameters = new ArrayList<Parameter>();
             for (int i = 0; i < genericParameterTypes.length; i++) {
                 final List<Annotation> tmpAnnotations = Arrays.asList(annotations[i]);
-                if (isContext(tmpAnnotations)) {
-                    paramsCount++;
-                } else {
-                    final Type genericParameterType = genericParameterTypes[i];
-                    final List<Parameter> tmpParameters = collectParameters(genericParameterType, tmpAnnotations, components, classConsumes, jsonViewAnnotation);
-                    if (tmpParameters.size() >= 1) {
-                        for (Parameter tmpParameter : tmpParameters) {
-                            Parameter processedParameter = ParameterProcessor.applyAnnotations(
-                                    tmpParameter,
-                                    genericParameterType,
-                                    tmpAnnotations,
-                                    components,
-                                    classConsumes == null ? new String[0] : classConsumes.value(),
-                                    null,
-                                    jsonViewAnnotation);
-                            if (processedParameter != null) {
-                                parameters.add(processedParameter);
-                            }
+                final Type genericParameterType = genericParameterTypes[i];
+                final List<Parameter> tmpParameters = collectParameters(genericParameterType, tmpAnnotations, components, classConsumes, jsonViewAnnotation);
+                if (tmpParameters.size() >= 1) {
+                    for (Parameter tmpParameter : tmpParameters) {
+                        Parameter processedParameter = ParameterProcessor.applyAnnotations(
+                                tmpParameter,
+                                genericParameterType,
+                                tmpAnnotations,
+                                components,
+                                classConsumes == null ? new String[0] : classConsumes,
+                                null,
+                                jsonViewAnnotation);
+                        if (processedParameter != null) {
+                            parameters.add(processedParameter);
                         }
-                        paramsCount++;
                     }
+                    paramsCount++;
                 }
             }
 
@@ -104,7 +99,7 @@ public class ReaderUtils {
      * @param components
      * @return the collection of supported parameters
      */
-    public static List<Parameter> collectFieldParameters(Class<?> cls, Components components, javax.ws.rs.Consumes classConsumes, JsonView jsonViewAnnotation) {
+    public static List<Parameter> collectFieldParameters(Class<?> cls, Components components, String[] classConsumes, JsonView jsonViewAnnotation) {
         final List<Parameter> parameters = new ArrayList<Parameter>();
         for (Field field : ReflectionUtils.getDeclaredFields(cls)) {
             final List<Annotation> annotations = Arrays.asList(field.getAnnotations());
@@ -114,19 +109,10 @@ public class ReaderUtils {
         return parameters;
     }
 
-    private static List<Parameter> collectParameters(Type type, List<Annotation> annotations, Components components, javax.ws.rs.Consumes classConsumes, JsonView jsonViewAnnotation) {
+    private static List<Parameter> collectParameters(Type type, List<Annotation> annotations, Components components, String[] classConsumes, JsonView jsonViewAnnotation) {
         final Iterator<OpenAPIExtension> chain = OpenAPIExtensions.chain();
         return chain.hasNext() ? chain.next().extractParameters(annotations, type, new HashSet<>(), components, classConsumes, null, false, jsonViewAnnotation, chain).parameters :
                 Collections.emptyList();
-    }
-
-    private static boolean isContext(List<Annotation> annotations) {
-        for (Annotation annotation : annotations) {
-            if (annotation instanceof Context) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public static Optional<List<String>> getStringListFromStringArray(String[] array) {
@@ -147,32 +133,41 @@ public class ReaderUtils {
         return Optional.of(list);
     }
 
-    public static boolean isIgnored(String path, OpenAPIConfiguration config) {
+    public static boolean isIgnored(String[] paths, OpenAPIConfiguration config) {
         if (config.getIgnoredRoutes() == null) {
             return false;
         }
         for (String item : config.getIgnoredRoutes()) {
             final int length = item.length();
-            if (path.startsWith(item) && (path.length() == length || path.startsWith(PATH_DELIMITER, length))) {
-                return true;
+            for (String path : paths) {
+                if (path.startsWith(item) && (path.length() == length || path.startsWith(PATH_DELIMITER, length))) {
+                    return true;
+                }
             }
         }
         return false;
     }
 
-    public static String getPath(javax.ws.rs.Path classLevelPath, javax.ws.rs.Path methodLevelPath, String parentPath, boolean isSubresource) {
-        if (classLevelPath == null && methodLevelPath == null && StringUtils.isEmpty(parentPath)) {
+    public static String[] getPath(String[] classLevelPaths, String[] methodLevelPaths) {
+        if (classLevelPaths == null && methodLevelPaths == null) {
             return null;
         }
-        StringBuilder b = new StringBuilder();
-        appendPathComponent(parentPath, b);
-        if (classLevelPath != null && !isSubresource) {
-            appendPathComponent(classLevelPath.value(), b);
+
+
+        String[] rootPaths = (classLevelPaths == null || classLevelPaths.length == 0) ? new String[]{"/"} : classLevelPaths;
+        String[] methodsPaths = (methodLevelPaths == null || methodLevelPaths.length == 0) ? new String[]{""} : methodLevelPaths;
+
+        String[] result = new String[rootPaths.length * methodsPaths.length];
+        int i = 0;
+        for (String root : rootPaths) {
+            for (String path : methodsPaths) {
+                StringBuilder b = new StringBuilder();
+                appendPathComponent(root, b);
+                appendPathComponent(path, b);
+                result[i++] = b.toString();
+            }
         }
-        if (methodLevelPath != null) {
-            appendPathComponent(methodLevelPath.value(), b);
-        }
-        return b.length() == 0 ? "/" : b.toString();
+        return result;
     }
 
     /**
@@ -182,8 +177,9 @@ public class ReaderUtils {
      *     <li>nulls, empty strings and "/" are nops</li>
      *     <li>output will always start with "/" and never end with "/"</li>
      * </ul>
+     *
      * @param component component to be added
-     * @param to output
+     * @param to        output
      */
     private static void appendPathComponent(String component, StringBuilder to) {
         if (component == null || component.isEmpty() || "/".equals(component)) {
@@ -199,42 +195,12 @@ public class ReaderUtils {
         }
     }
 
-    public static String extractOperationMethod(Method method, Iterator<OpenAPIExtension> chain) {
-        if (method.getAnnotation(javax.ws.rs.GET.class) != null) {
-            return GET_METHOD;
-        } else if (method.getAnnotation(javax.ws.rs.PUT.class) != null) {
-            return PUT_METHOD;
-        } else if (method.getAnnotation(javax.ws.rs.POST.class) != null) {
-            return POST_METHOD;
-        } else if (method.getAnnotation(javax.ws.rs.DELETE.class) != null) {
-            return DELETE_METHOD;
-        } else if (method.getAnnotation(javax.ws.rs.OPTIONS.class) != null) {
-            return OPTIONS_METHOD;
-        } else if (method.getAnnotation(javax.ws.rs.HEAD.class) != null) {
-            return HEAD_METHOD;
-        } else if (method.getAnnotation(DELETE.class) != null) {
-            return DELETE_METHOD;
-        } else if (method.getAnnotation(HttpMethod.class) != null) {
-            HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
-            return httpMethod.value().toLowerCase();
-        } else if (!StringUtils.isEmpty(getHttpMethodFromCustomAnnotations(method))) {
-            return getHttpMethodFromCustomAnnotations(method);
-        } else if ((ReflectionUtils.getOverriddenMethod(method)) != null) {
-            return extractOperationMethod(ReflectionUtils.getOverriddenMethod(method), chain);
-        } else if (chain != null && chain.hasNext()) {
-            return chain.next().extractOperationMethod(method, chain);
-        } else {
-            return null;
+    public static String[] extractOperationMethod(Method method, Iterator<OpenAPIExtension> chain) {
+        RequestMethod[] methods = method.getAnnotation(RequestMapping.class).method();
+        if (methods.length == 0) {
+            return new String[]{GET_METHOD};
         }
-    }
-
-    public static String getHttpMethodFromCustomAnnotations(Method method) {
-        for (Annotation methodAnnotation : method.getAnnotations()) {
-            HttpMethod httpMethod = methodAnnotation.annotationType().getAnnotation(HttpMethod.class);
-            if (httpMethod != null) {
-                return httpMethod.value().toLowerCase();
-            }
-        }
-        return null;
+        String[] result = new String[methods.length];
+        return (String[]) Arrays.stream(methods).distinct().map(m -> m.name().toLowerCase()).toArray();
     }
 }

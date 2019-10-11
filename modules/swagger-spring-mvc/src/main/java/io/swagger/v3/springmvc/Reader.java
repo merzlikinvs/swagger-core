@@ -14,9 +14,6 @@ import io.swagger.v3.core.util.Json;
 import io.swagger.v3.core.util.ParameterProcessor;
 import io.swagger.v3.core.util.PathUtils;
 import io.swagger.v3.core.util.ReflectionUtils;
-import io.swagger.v3.springmvc.ext.OpenAPIExtension;
-import io.swagger.v3.springmvc.ext.OpenAPIExtensions;
-import io.swagger.v3.springmvc.util.ReaderUtils;
 import io.swagger.v3.oas.annotations.ExternalDocumentation;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
@@ -42,14 +39,14 @@ import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.oas.models.tags.Tag;
+import io.swagger.v3.springmvc.ext.OpenAPIExtension;
+import io.swagger.v3.springmvc.ext.OpenAPIExtensions;
+import io.swagger.v3.springmvc.util.ReaderUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.bind.annotation.RequestMapping;
 
-import javax.ws.rs.ApplicationPath;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.Application;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -77,7 +74,6 @@ public class Reader implements OpenApiReader {
 
     protected OpenAPIConfiguration config;
 
-    private Application application;
     private OpenAPI openAPI;
     private Components components;
     private Paths paths;
@@ -118,7 +114,7 @@ public class Reader implements OpenApiReader {
      * Scans a single class for Swagger annotations - does not invoke ReaderListeners
      */
     public OpenAPI read(Class<?> cls) {
-        return read(cls, resolveApplicationPath(), null, false, null, null, new LinkedHashSet<String>(), new ArrayList<Parameter>(), new HashSet<Class<?>>());
+        return read(cls, null, null, null, new LinkedHashSet<String>(), new ArrayList<Parameter>(), new HashSet<Class<?>>());
     }
 
     /**
@@ -166,7 +162,7 @@ public class Reader implements OpenApiReader {
         }
 
         for (Class<?> cls : sortedClasses) {
-            read(cls, resolveApplicationPath(), null, false, null, null, new LinkedHashSet<String>(), new ArrayList<Parameter>(), new HashSet<Class<?>>());
+            read(cls, null, null, null, new LinkedHashSet<String>(), new ArrayList<Parameter>(), new HashSet<Class<?>>());
         }
 
         for (ReaderListener listener : listeners.values()) {
@@ -196,54 +192,8 @@ public class Reader implements OpenApiReader {
         return read(classes);
     }
 
-    protected String resolveApplicationPath() {
-        if (application != null) {
-            Class<?> applicationToScan = this.application.getClass();
-            ApplicationPath applicationPath;
-            //search up in the hierarchy until we find one with the annotation, this is needed because for example Weld proxies will not have the annotation and the right class will be the superClass
-            while ((applicationPath = applicationToScan.getAnnotation(ApplicationPath.class)) == null && !applicationToScan.getSuperclass().equals(Application.class)) {
-                applicationToScan = applicationToScan.getSuperclass();
-            }
-
-            if (applicationPath != null) {
-                if (StringUtils.isNotBlank(applicationPath.value())) {
-                    return applicationPath.value();
-                }
-            }
-            // look for inner application, e.g. ResourceConfig
-            try {
-                Application innerApp = application;
-                Method m = application.getClass().getMethod("getApplication", null);
-                while (m != null) {
-                    Application retrievedApp = (Application) m.invoke(innerApp, null);
-                    if (retrievedApp == null) {
-                        break;
-                    }
-                    if (retrievedApp.getClass().equals(innerApp.getClass())) {
-                        break;
-                    }
-                    innerApp = retrievedApp;
-                    applicationPath = innerApp.getClass().getAnnotation(ApplicationPath.class);
-                    if (applicationPath != null) {
-                        if (StringUtils.isNotBlank(applicationPath.value())) {
-                            return applicationPath.value();
-                        }
-                    }
-                    m = innerApp.getClass().getMethod("getApplication", null);
-                }
-            } catch (NoSuchMethodException e) {
-                // no inner application found
-            } catch (Exception e) {
-                // no inner application found
-            }
-        }
-        return "";
-    }
-
     public OpenAPI read(Class<?> cls,
-                        String parentPath,
                         String parentMethod,
-                        boolean isSubresource,
                         RequestBody parentRequestBody,
                         ApiResponses parentResponses,
                         Set<String> parentTags,
@@ -252,7 +202,8 @@ public class Reader implements OpenApiReader {
 
         Hidden hidden = cls.getAnnotation(Hidden.class);
         // class path
-        final javax.ws.rs.Path apiPath = ReflectionUtils.getAnnotation(cls, javax.ws.rs.Path.class);
+        RequestMapping classMapping = ReflectionUtils.getAnnotation(cls, RequestMapping.class);
+        final String[] apiPath = classMapping == null ? new String[0] : classMapping.path();
 
         if (hidden != null) { //  || (apiPath == null && !isSubresource)) {
             return openAPI;
@@ -267,8 +218,8 @@ public class Reader implements OpenApiReader {
         io.swagger.v3.oas.annotations.tags.Tag[] apiTags = ReflectionUtils.getRepeatableAnnotationsArray(cls, io.swagger.v3.oas.annotations.tags.Tag.class);
         io.swagger.v3.oas.annotations.servers.Server[] apiServers = ReflectionUtils.getRepeatableAnnotationsArray(cls, io.swagger.v3.oas.annotations.servers.Server.class);
 
-        javax.ws.rs.Consumes classConsumes = ReflectionUtils.getAnnotation(cls, javax.ws.rs.Consumes.class);
-        javax.ws.rs.Produces classProduces = ReflectionUtils.getAnnotation(cls, javax.ws.rs.Produces.class);
+        String[] classConsumes = classMapping == null ? new String[0] : classMapping.consumes();
+        String[] classProduces = classMapping == null ? new String[0] : classMapping.produces();
 
         // OpenApiDefinition
         OpenAPIDefinition openAPIDefinition = ReflectionUtils.getAnnotation(cls, OpenAPIDefinition.class);
@@ -345,13 +296,6 @@ public class Reader implements OpenApiReader {
             );
         }
 
-        // parent tags
-        if (isSubresource) {
-            if (parentTags != null) {
-                classTags.addAll(parentTags);
-            }
-        }
-
         // servers
         final List<io.swagger.v3.oas.models.servers.Server> classServers = new ArrayList<>();
         if (apiServers != null) {
@@ -374,53 +318,36 @@ public class Reader implements OpenApiReader {
         globalParameters.addAll(ReaderUtils.collectFieldParameters(cls, components, classConsumes, null));
 
         // iterate class methods
-        Method methods[] = cls.getMethods();
+        Method[] methods = cls.getMethods();
         for (Method method : methods) {
-            if (isOperationHidden(method)) {
+            RequestMapping methodMapping = ReflectionUtils.getAnnotation(method, RequestMapping.class);
+            if (isOperationHidden(method) || methodMapping == null) {
                 continue;
             }
             AnnotatedMethod annotatedMethod = bd.findMethod(method.getName(), method.getParameterTypes());
-            javax.ws.rs.Produces methodProduces = ReflectionUtils.getAnnotation(method, javax.ws.rs.Produces.class);
-            javax.ws.rs.Consumes methodConsumes = ReflectionUtils.getAnnotation(method, javax.ws.rs.Consumes.class);
+            String[] methodProduces = methodMapping.produces();
+            String[] methodConsumes = methodMapping.consumes();
 
             if (ReflectionUtils.isOverriddenMethod(method, cls)) {
                 continue;
             }
 
-            javax.ws.rs.Path methodPath = ReflectionUtils.getAnnotation(method, javax.ws.rs.Path.class);
+            String[] methodPaths = methodMapping.path();
 
-            String operationPath = ReaderUtils.getPath(apiPath, methodPath, parentPath, isSubresource);
+            String[] operationPaths = ReaderUtils.getPath(apiPath, methodPaths);
 
-            // skip if path is the same as parent, e.g. for @ApplicationPath annotated application
-            // extending resource config.
-            if (ignoreOperationPath(operationPath, parentPath) && !isSubresource) {
-                continue;
-            }
+//            if (ignoreOperationPath(operationPath, parentPath) && !isSubresource) {
+//                continue;
+//            }
 
             Map<String, String> regexMap = new LinkedHashMap<>();
-            operationPath = PathUtils.parsePath(operationPath, regexMap);
-            if (operationPath != null) {
+            operationPaths = PathUtils.parsePath(operationPaths, regexMap);
+            if (operationPaths != null) {
                 if (config != null && ReaderUtils.isIgnored(operationPath, config)) {
                     continue;
                 }
 
-                final Class<?> subResource = getSubResourceWithJaxRsSubresourceLocatorSpecs(method);
-
-                String httpMethod = ReaderUtils.extractOperationMethod(method, OpenAPIExtensions.chain());
-                httpMethod = (httpMethod == null && isSubresource) ? parentMethod : httpMethod;
-
-                if (StringUtils.isBlank(httpMethod) && subResource == null) {
-                    continue;
-                } else if (StringUtils.isBlank(httpMethod) && subResource != null) {
-                    Type returnType = method.getGenericReturnType();
-                    if (annotatedMethod != null && annotatedMethod.getType() != null) {
-                        returnType = annotatedMethod.getType();
-                    }
-
-                    if (shouldIgnoreClass(returnType.getTypeName()) && !method.getGenericReturnType().equals(subResource)) {
-                        continue;
-                    }
-                }
+                String[] httpMethods = ReaderUtils.extractOperationMethod(method, OpenAPIExtensions.chain());
 
                 io.swagger.v3.oas.annotations.Operation apiOperation = ReflectionUtils.getAnnotation(method, io.swagger.v3.oas.annotations.Operation.class);
                 JsonView jsonViewAnnotation;
@@ -433,18 +360,18 @@ public class Reader implements OpenApiReader {
                     /* If one and only one exists, use the @JsonView annotation from the method parameter annotated
                        with @RequestBody. Otherwise fall back to the @JsonView annotation for the method itself. */
                     jsonViewAnnotationForRequestBody = (JsonView) Arrays.stream(ReflectionUtils.getParameterAnnotations(method))
-                        .filter(arr ->
-                            Arrays.stream(arr)
-                                .anyMatch(annotation ->
+                            .filter(arr ->
+                                    Arrays.stream(arr)
+                                            .anyMatch(annotation ->
+                                                    annotation.annotationType()
+                                                            .equals(io.swagger.v3.oas.annotations.parameters.RequestBody.class)
+                                            )
+                            ).flatMap(Arrays::stream)
+                            .filter(annotation ->
                                     annotation.annotationType()
-                                        .equals(io.swagger.v3.oas.annotations.parameters.RequestBody.class)
-                                )
-                        ).flatMap(Arrays::stream)
-                        .filter(annotation ->
-                            annotation.annotationType()
-                                .equals(JsonView.class)
-                        ).reduce((a, b) -> null)
-                        .orElse(jsonViewAnnotation);
+                                            .equals(JsonView.class)
+                            ).reduce((a, b) -> null)
+                            .orElse(jsonViewAnnotation);
                 }
 
                 Operation operation = parseMethod(
@@ -458,7 +385,6 @@ public class Reader implements OpenApiReader {
                         classExternalDocumentation,
                         classTags,
                         classServers,
-                        isSubresource,
                         parentRequestBody,
                         parentResponses,
                         jsonViewAnnotation,
@@ -531,7 +457,7 @@ public class Reader implements OpenApiReader {
                     // if we have form parameters, need to merge them into single schema and use as request body..
                     if (formParameters.size() > 0) {
                         Schema mergedSchema = new ObjectSchema();
-                        for (Parameter formParam: formParameters) {
+                        for (Parameter formParam : formParameters) {
                             mergedSchema.addProperties(formParam.getName(), formParam.getSchema());
                             if (null != formParam.getRequired() && formParam.getRequired()) {
                                 mergedSchema.addRequiredItem(formParam.getName());
@@ -562,18 +488,6 @@ public class Reader implements OpenApiReader {
                         }
                     }
 
-                    if (subResource != null && !scannedResources.contains(subResource)) {
-                        scannedResources.add(subResource);
-                        read(subResource, operationPath, httpMethod, true, operation.getRequestBody(), operation.getResponses(), classTags, operation.getParameters(), scannedResources);
-                        // remove the sub resource so that it can visit it later in another path
-                        // but we have a room for optimization in the future to reuse the scanned result
-                        // by caching the scanned resources in the reader instance to avoid actual scanning
-                        // the the resources again
-                        scannedResources.remove(subResource);
-                        // don't proceed with root resource operation, as it's handled by subresource
-                        continue;
-                    }
-
                     final Iterator<OpenAPIExtension> chain = OpenAPIExtensions.chain();
                     if (chain.hasNext()) {
                         final OpenAPIExtension extension = chain.next();
@@ -587,9 +501,6 @@ public class Reader implements OpenApiReader {
                         pathItemObject = new PathItem();
                     }
 
-                    if (StringUtils.isBlank(httpMethod)) {
-                        continue;
-                    }
                     setPathItemOperation(pathItemObject, httpMethod, operation);
 
                     paths.addPathItem(operationPath, pathItemObject);
@@ -632,16 +543,16 @@ public class Reader implements OpenApiReader {
         return openAPI;
     }
 
-    protected Content processContent(Content content, Schema schema, Consumes methodConsumes, Consumes classConsumes) {
+    protected Content processContent(Content content, Schema schema, String[] methodConsumes, String[] classConsumes) {
         if (content == null) {
             content = new Content();
         }
         if (methodConsumes != null) {
-            for (String value : methodConsumes.value()) {
+            for (String value : methodConsumes) {
                 setMediaTypeToContent(schema, content, value);
             }
         } else if (classConsumes != null) {
-            for (String value : classConsumes.value()) {
+            for (String value : classConsumes) {
                 setMediaTypeToContent(schema, content, value);
             }
         } else {
@@ -651,7 +562,7 @@ public class Reader implements OpenApiReader {
     }
 
     protected void processRequestBody(Parameter requestBodyParameter, Operation operation,
-                                      Consumes methodConsumes, Consumes classConsumes,
+                                      String[] methodConsumes, String[] classConsumes,
                                       List<Parameter> operationParameters,
                                       Annotation[] paramAnnotations, Type type,
                                       JsonView jsonViewAnnotation) {
@@ -752,7 +663,6 @@ public class Reader implements OpenApiReader {
                 Optional.empty(),
                 new HashSet<>(),
                 new ArrayList<>(),
-                false,
                 null,
                 null,
                 jsonViewAnnotation,
@@ -763,15 +673,14 @@ public class Reader implements OpenApiReader {
     public Operation parseMethod(
             Method method,
             List<Parameter> globalParameters,
-            Produces methodProduces,
-            Produces classProduces,
-            Consumes methodConsumes,
-            Consumes classConsumes,
+            String[] methodProduces,
+            String[] classProduces,
+            String[] methodConsumes,
+            String[] classConsumes,
             List<SecurityRequirement> classSecurityRequirements,
             Optional<io.swagger.v3.oas.models.ExternalDocumentation> classExternalDocs,
             Set<String> classTags,
             List<io.swagger.v3.oas.models.servers.Server> classServers,
-            boolean isSubresource,
             RequestBody parentRequestBody,
             ApiResponses parentResponses,
             JsonView jsonViewAnnotation,
@@ -789,7 +698,6 @@ public class Reader implements OpenApiReader {
                 classExternalDocs,
                 classTags,
                 classServers,
-                isSubresource,
                 parentRequestBody,
                 parentResponses,
                 jsonViewAnnotation,
@@ -800,15 +708,14 @@ public class Reader implements OpenApiReader {
     public Operation parseMethod(
             Method method,
             List<Parameter> globalParameters,
-            Produces methodProduces,
-            Produces classProduces,
-            Consumes methodConsumes,
-            Consumes classConsumes,
+            String[] methodProduces,
+            String[] classProduces,
+            String[] methodConsumes,
+            String[] classConsumes,
             List<SecurityRequirement> classSecurityRequirements,
             Optional<io.swagger.v3.oas.models.ExternalDocumentation> classExternalDocs,
             Set<String> classTags,
             List<io.swagger.v3.oas.models.servers.Server> classServers,
-            boolean isSubresource,
             RequestBody parentRequestBody,
             ApiResponses parentResponses,
             JsonView jsonViewAnnotation,
@@ -827,7 +734,6 @@ public class Reader implements OpenApiReader {
                 classExternalDocs,
                 classTags,
                 classServers,
-                isSubresource,
                 parentRequestBody,
                 parentResponses,
                 jsonViewAnnotation,
@@ -839,15 +745,14 @@ public class Reader implements OpenApiReader {
             Class<?> cls,
             Method method,
             List<Parameter> globalParameters,
-            Produces methodProduces,
-            Produces classProduces,
-            Consumes methodConsumes,
-            Consumes classConsumes,
+            String[] methodProduces,
+            String[] classProduces,
+            String[] methodConsumes,
+            String[] classConsumes,
             List<SecurityRequirement> classSecurityRequirements,
             Optional<io.swagger.v3.oas.models.ExternalDocumentation> classExternalDocs,
             Set<String> classTags,
             List<io.swagger.v3.oas.models.servers.Server> classServers,
-            boolean isSubresource,
             RequestBody parentRequestBody,
             ApiResponses parentResponses,
             JsonView jsonViewAnnotation,
@@ -929,7 +834,7 @@ public class Reader implements OpenApiReader {
         }
 
         // RequestBody in Method
-        if (apiRequestBody != null && operation.getRequestBody() == null){
+        if (apiRequestBody != null && operation.getRequestBody() == null) {
             OperationParser.getRequestBody(apiRequestBody, classConsumes, methodConsumes, components, jsonViewAnnotation).ifPresent(
                     operation::setRequestBody);
         }
@@ -989,25 +894,6 @@ public class Reader implements OpenApiReader {
             classExternalDocs.ifPresent(operation::setExternalDocs);
         }
 
-        // if subresource, merge parent requestBody
-        if (isSubresource && parentRequestBody != null) {
-            if (operation.getRequestBody() == null) {
-                operation.requestBody(parentRequestBody);
-            } else {
-                Content content = operation.getRequestBody().getContent();
-                if (content == null) {
-                    content = parentRequestBody.getContent();
-                    operation.getRequestBody().setContent(content);
-                } else if (parentRequestBody.getContent() != null){
-                    for (String parentMediaType: parentRequestBody.getContent().keySet()) {
-                        if (content.get(parentMediaType) == null) {
-                            content.addMediaType(parentMediaType, parentRequestBody.getContent().get(parentMediaType));
-                        }
-                    }
-                }
-            }
-        }
-
         // handle return type, add as response in case.
         Type returnType = method.getGenericReturnType();
 
@@ -1015,47 +901,11 @@ public class Reader implements OpenApiReader {
             returnType = annotatedMethod.getType();
         }
 
-        final Class<?> subResource = getSubResourceWithJaxRsSubresourceLocatorSpecs(method);
-        if (!shouldIgnoreClass(returnType.getTypeName()) && !method.getGenericReturnType().equals(subResource)) {
-            ResolvedSchema resolvedSchema = ModelConverters.getInstance().resolveAsResolvedSchema(new AnnotatedType(returnType).resolveAsRef(true).jsonViewAnnotation(jsonViewAnnotation));
-            if (resolvedSchema.schema != null) {
-                Schema returnTypeSchema = resolvedSchema.schema;
-                Content content = new Content();
-                MediaType mediaType = new MediaType().schema(returnTypeSchema);
-                AnnotationsUtils.applyTypes(classProduces == null ? new String[0] : classProduces.value(),
-                        methodProduces == null ? new String[0] : methodProduces.value(), content, mediaType);
-                if (operation.getResponses() == null) {
-                    operation.responses(
-                            new ApiResponses()._default(
-                                    new ApiResponse().description(DEFAULT_DESCRIPTION)
-                                            .content(content)
-                            )
-                    );
-                }
-                if (operation.getResponses().getDefault() != null &&
-                        StringUtils.isBlank(operation.getResponses().getDefault().get$ref())) {
-                    if (operation.getResponses().getDefault().getContent() == null) {
-                        operation.getResponses().getDefault().content(content);
-                    } else {
-                        for (String key : operation.getResponses().getDefault().getContent().keySet()) {
-                            if (operation.getResponses().getDefault().getContent().get(key).getSchema() == null) {
-                                operation.getResponses().getDefault().getContent().get(key).setSchema(returnTypeSchema);
-                            }
-                        }
-                    }
-                }
-                Map<String, Schema> schemaMap = resolvedSchema.referencedSchemas;
-                if (schemaMap != null) {
-                    schemaMap.forEach((key, schema) -> components.addSchemas(key, schema));
-                }
-
-            }
-        }
         if (operation.getResponses() == null || operation.getResponses().isEmpty()) {
             Content content = new Content();
             MediaType mediaType = new MediaType();
-            AnnotationsUtils.applyTypes(classProduces == null ? new String[0] : classProduces.value(),
-                    methodProduces == null ? new String[0] : methodProduces.value(), content, mediaType);
+            AnnotationsUtils.applyTypes(classProduces == null ? new String[0] : classProduces,
+                    methodProduces == null ? new String[0] : methodProduces, content, mediaType);
 
             ApiResponse apiResponseObject = new ApiResponse().description(DEFAULT_DESCRIPTION).content(content);
             operation.setResponses(new ApiResponses()._default(apiResponseObject));
@@ -1072,7 +922,7 @@ public class Reader implements OpenApiReader {
         String rawClassName = className;
         if (rawClassName.startsWith("[")) { // jackson JavaType
             rawClassName = className.replace("[simple type, class ", "");
-            rawClassName = rawClassName.substring(0, rawClassName.length() -1);
+            rawClassName = rawClassName.substring(0, rawClassName.length() - 1);
         }
         ignore = ignore || rawClassName.startsWith("javax.ws.rs.");
         ignore = ignore || rawClassName.equalsIgnoreCase("void");
@@ -1082,10 +932,10 @@ public class Reader implements OpenApiReader {
 
     private Map<String, Callback> getCallbacks(
             io.swagger.v3.oas.annotations.callbacks.Callback apiCallback,
-            Produces methodProduces,
-            Produces classProduces,
-            Consumes methodConsumes,
-            Consumes classConsumes,
+            String[] methodProduces,
+            String[] classProduces,
+            String[] methodConsumes,
+            String[] classConsumes,
             JsonView jsonViewAnnotation) {
         Map<String, Callback> callbackMap = new HashMap<>();
         if (apiCallback == null) {
@@ -1153,10 +1003,10 @@ public class Reader implements OpenApiReader {
     private void setOperationObjectFromApiOperationAnnotation(
             Operation operation,
             io.swagger.v3.oas.annotations.Operation apiOperation,
-            Produces methodProduces,
-            Produces classProduces,
-            Consumes methodConsumes,
-            Consumes classConsumes,
+            String[] methodProduces,
+            String[] classProduces,
+            String[] methodConsumes,
+            String[] classConsumes,
             JsonView jsonViewAnnotation) {
         if (StringUtils.isNotBlank(apiOperation.summary())) {
             operation.setSummary(apiOperation.summary());
@@ -1252,7 +1102,7 @@ public class Reader implements OpenApiReader {
         return false;
     }
 
-    protected Optional<List<Parameter>> getParametersListFromAnnotation(io.swagger.v3.oas.annotations.Parameter[] parameters, Consumes classConsumes, Consumes methodConsumes, Operation operation, JsonView jsonViewAnnotation) {
+    protected Optional<List<Parameter>> getParametersListFromAnnotation(io.swagger.v3.oas.annotations.Parameter[] parameters, String[] classConsumes, String[] methodConsumes, Operation operation, JsonView jsonViewAnnotation) {
         if (parameters == null) {
             return Optional.empty();
         }
@@ -1268,8 +1118,8 @@ public class Reader implements OpenApiReader {
         return Optional.of(parametersObject);
     }
 
-    protected ResolvedParameter getParameters(Type type, List<Annotation> annotations, Operation operation, javax.ws.rs.Consumes classConsumes,
-                                              javax.ws.rs.Consumes methodConsumes, JsonView jsonViewAnnotation) {
+    protected ResolvedParameter getParameters(Type type, List<Annotation> annotations, Operation operation, String[] classConsumes,
+                                              String[] methodConsumes, JsonView jsonViewAnnotation) {
         final Iterator<OpenAPIExtension> chain = OpenAPIExtensions.chain();
         if (!chain.hasNext()) {
             return new ResolvedParameter();
@@ -1362,10 +1212,6 @@ public class Reader implements OpenApiReader {
         return false;
     }
 
-    public void setApplication(Application application) {
-        this.application = application;
-    }
-
     protected boolean ignoreOperationPath(String path, String parentPath) {
 
         if (StringUtils.isBlank(path) && StringUtils.isBlank(parentPath)) {
@@ -1395,26 +1241,6 @@ public class Reader implements OpenApiReader {
             return true;
         }
         return false;
-    }
-
-    protected Class<?> getSubResourceWithJaxRsSubresourceLocatorSpecs(Method method) {
-        final Class<?> rawType = method.getReturnType();
-        final Class<?> type;
-        if (Class.class.equals(rawType)) {
-            type = getClassArgument(method.getGenericReturnType());
-            if (type == null) {
-                return null;
-            }
-        } else {
-            type = rawType;
-        }
-
-        if (method.getAnnotation(javax.ws.rs.Path.class) != null) {
-            if (ReaderUtils.extractOperationMethod(method, null) == null) {
-                return type;
-            }
-        }
-        return null;
     }
 
     private static Class<?> getClassArgument(Type cls) {
